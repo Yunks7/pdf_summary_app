@@ -76,9 +76,16 @@ class PDFSummaryApp(QWidget):
         self.btn_summarize.clicked.connect(self.summarize_pdf)
         layout.addWidget(self.btn_summarize)
 
+        # TXT保存ボタン追加
+        self.btn_save_txt = QPushButton("Save as TXT")
+        self.btn_save_txt.setEnabled(False)
+        self.btn_save_txt.clicked.connect(self.save_summary_as_txt)
+        layout.addWidget(self.btn_save_txt)
+
         self.setLayout(layout)
         self.pdf_text = ""
         self.use_gemini = USE_GEMINI  # 初期設定
+        self.summary_text = ""  # 要約の内容を保持する
 
     def update_model(self, index):
         """ モデル選択を更新 """
@@ -131,15 +138,17 @@ class PDFSummaryApp(QWidget):
         self.label_status.setText("Status: Processing summary...")
         self.progress_bar.setValue(30)
 
-        summary = self.generate_summary(self.pdf_text)
+        self.summary_text = self.generate_summary(self.pdf_text)  # 要約を self.summary_text に格納
 
-        if summary:
-            self.text_area.setText(summary)
+        if self.summary_text:
+            self.text_area.setText(self.summary_text)
             self.label_status.setText("Status: Summary displayed")
             self.progress_bar.setValue(100)
+            self.btn_save_txt.setEnabled(True)  # TXT保存ボタンを有効化
         else:
             self.label_status.setText("Status: Summary failed")
             self.progress_bar.setValue(0)
+
 
     def generate_summary(self, text):
         try:
@@ -194,6 +203,22 @@ class PDFSummaryApp(QWidget):
             return response.text.strip() if response.text else "No response from Gemini."
         except Exception as e:
             return f"Gemini API Error: {str(e)}"
+    
+    # 要約をTXTファイルに保存
+    def save_summary_as_txt(self):
+        if not self.summary_text:
+            return
+        
+        file_dialog = QFileDialog()
+        file_path, _ = file_dialog.getSaveFileName(self, "Save Summary as TXT", "", "Text Files (*.txt)")
+
+        if file_path:
+            try:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(self.summary_text)
+                self.label_status.setText("Status: summary saved as TXT")
+            except Exception as e:
+                self.label_status.setText(f"Status: save failed ({str(e)})")
 
 
 if __name__ == "__main__":
