@@ -5,9 +5,11 @@ import openai
 import google.generativeai as genai
 from dotenv import load_dotenv
 from PyQt6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog, QTextEdit, QProgressBar, QComboBox
+    QApplication, QWidget, QVBoxLayout, QPushButton, QLabel, QFileDialog, QTextEdit, 
+    QProgressBar, QComboBox, QRadioButton, QButtonGroup
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QSettings
+from PyQt6.QtGui import QIcon
 
 # 環境変数を読み込む
 load_dotenv()
@@ -15,28 +17,22 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
-# OpenAI / Gemini のどちらを使用するか選択可能
-USE_GEMINI = False  # True にするとGeminiを使用
-
-if USE_GEMINI:
-    if not GEMINI_API_KEY:
-        print("Error: GEMINI_API_KEY is not set.")
-        sys.exit(1)
-    genai.configure(api_key=GEMINI_API_KEY)
-else:
-    if not OPENAI_API_KEY:
-        print("Error: OPENAI_API_KEY is not set.")
-        sys.exit(1)
+# OpenAI クライアントの初期化
+if OPENAI_API_KEY:
     openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-# モデル設定
-GPT_MODEL = "gpt-4o-mini"  # OpenAI用
-GEMINI_MODEL = "gemini-1.5-flash"  # Gemini用
+# **QSettings を使用してモデル設定を保存・復元**
+settings = QSettings("MyCompany", "PDFSummaryApp")
+
+# モデルリスト
+GPT_MODELS = ["gpt-4o", "gpt-4-turbo", "gpt-4o-mini", "gpt-3.5-turbo"]
+GEMINI_MODELS = ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-1.5-flash-8B"]
 
 class PDFSummaryApp(QWidget):
     def __init__(self):
         super().__init__()
         self.init_ui()
+        self.load_settings()  # **前回の設定をロード**
 
     def init_ui(self):
         self.setWindowTitle("PDF Summary App")
@@ -44,6 +40,32 @@ class PDFSummaryApp(QWidget):
         self.setAcceptDrops(True)  # ドラッグ＆ドロップを有効化
 
         layout = QVBoxLayout()
+        
+        # **AI選択ラジオボタン**
+        self.radio_gpt = QRadioButton("GPT")
+        self.radio_gemini = QRadioButton("Gemini")
+        self.radio_gpt.setChecked(True)  # デフォルトはGPT
+        self.radio_group = QButtonGroup(self)
+        self.radio_group.addButton(self.radio_gpt)
+        self.radio_group.addButton(self.radio_gemini)
+        layout.addWidget(self.radio_gpt)
+        layout.addWidget(self.radio_gemini)
+
+        # **モデル選択（GPT / Gemini）**
+        self.model_selector = QComboBox()
+        self.update_model_list()  # 初期のモデルリストを設定
+        layout.addWidget(self.model_selector)
+        
+        # **ラジオボタンとプルダウン変更時に設定を保存**
+        self.radio_gpt.toggled.connect(self.update_model_list)
+        self.radio_gemini.toggled.connect(self.update_model_list)
+        self.radio_gpt.toggled.connect(self.save_settings)
+        self.radio_gemini.toggled.connect(self.save_settings)
+        self.model_selector.currentIndexChanged.connect(self.save_settings)
+
+        # ラジオボタンの変更を監視
+        self.radio_gpt.toggled.connect(self.update_model_list)
+        self.radio_gemini.toggled.connect(self.update_model_list)
 
         # PDF選択ボタン
         self.btn_select_pdf = QPushButton("Select PDF File")
@@ -58,12 +80,6 @@ class PDFSummaryApp(QWidget):
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
         layout.addWidget(self.progress_bar)
-
-        # モデル選択（OpenAI / Gemini）
-        self.model_selector = QComboBox()
-        self.model_selector.addItems(["OpenAI (GPT-4o-mini)", "Gemini (1.5-flash)"])
-        self.model_selector.currentIndexChanged.connect(self.update_model)
-        layout.addWidget(self.model_selector)
 
         # PDF内容表示エリア
         self.text_area = QTextEdit()
@@ -84,13 +100,43 @@ class PDFSummaryApp(QWidget):
 
         self.setLayout(layout)
         self.pdf_text = ""
-        self.use_gemini = USE_GEMINI  # 初期設定
-        self.summary_text = ""  # 要約の内容を保持する
+        self.summary_text = ""
 
-    def update_model(self, index):
-        """ モデル選択を更新 """
-        self.use_gemini = (index == 1)
-        print(f"Using {'Gemini' if self.use_gemini else 'OpenAI'}")
+    def update_model_list(self):
+        """ GPT か Gemini かによって選択可能なモデルを変更 """
+        self.model_selector.clear()
+        if self.radio_gpt.isChecked():
+            self.model_selector.addItems(GPT_MODELS)
+        else:
+            self.model_selector.addItems(GEMINI_MODELS)
+    
+    def load_settings(self):
+        """ QSettings から前回のモデル設定をロード """
+        last_model = settings.value("selected_model", GPT_MODELS[0])
+        last_ai = settings.value("selected_ai", "GPT")
+
+        if last_ai == "GPT":
+            self.radio_gpt.setChecked(True)
+        else:
+            self.radio_gemini.setChecked(True)
+
+        # モデルを更新し、前回の選択をセット
+        self.update_model_list()
+        index = self.model_selector.findText(last_model)
+        if index != -1:
+            self.model_selector.setCurrentIndex(index)
+
+    def save_settings(self):
+        """ QSettings に現在のモデル設定を保存 """
+        selected_model = self.model_selector.currentText()
+        selected_ai = "GPT" if self.radio_gpt.isChecked() else "Gemini"
+        settings.setValue("selected_model", selected_model)
+        settings.setValue("selected_ai", selected_ai)
+
+    def closeEvent(self, event):
+        """ アプリ終了時に設定を保存 """
+        self.save_settings()
+        event.accept()
 
     def select_pdf(self):
         file_dialog = QFileDialog()
@@ -153,6 +199,7 @@ class PDFSummaryApp(QWidget):
     def generate_summary(self, text):
         try:
             self.progress_bar.setValue(50)
+            selected_model = self.model_selector.currentText()
 
             prompt = f"""
             Summarize the following academic paper in Japanese. The summary should include:
@@ -167,42 +214,25 @@ class PDFSummaryApp(QWidget):
             {text}
             """
 
-            if self.use_gemini:
-                response = self.call_gemini_api(prompt)
+            if self.radio_gpt.isChecked():
+                response = openai_client.chat.completions.create(
+                    model=selected_model,
+                    messages=[{"role": "system", "content": "You are an expert in summarizing academic papers."},
+                              {"role": "user", "content": prompt}],
+                    temperature=0.5,
+                    max_tokens=1500
+                )
+                return response.choices[0].message.content.strip()
             else:
-                response = self.call_openai_api(prompt)
-
+                model = genai.GenerativeModel(selected_model)
+                response = model.generate_content(prompt)
+                return response.text.strip() if response.text else "No response from Gemini."
             self.progress_bar.setValue(80)
 
             return response or "No summary generated."
 
         except Exception as e:
             return f"Error: {str(e)}"
-
-    def call_openai_api(self, prompt):
-        """ OpenAI APIを使用して要約を生成 """
-        try:
-            response = openai_client.chat.completions.create(
-                model=GPT_MODEL,
-                messages=[
-                    {"role": "system", "content": "You are an expert in summarizing academic papers."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.5,
-                max_tokens=1500
-            )
-            return response.choices[0].message.content.strip()
-        except openai.OpenAIError as e:
-            return f"OpenAI API Error: {str(e)}"
-
-    def call_gemini_api(self, prompt):
-        """ Gemini APIを使用して要約を生成 """
-        try:
-            model = genai.GenerativeModel(GEMINI_MODEL)
-            response = model.generate_content(prompt)
-            return response.text.strip() if response.text else "No response from Gemini."
-        except Exception as e:
-            return f"Gemini API Error: {str(e)}"
     
     # 要約をTXTファイルに保存
     def save_summary_as_txt(self):
@@ -220,9 +250,16 @@ class PDFSummaryApp(QWidget):
             except Exception as e:
                 self.label_status.setText(f"Status: save failed ({str(e)})")
 
+def ico_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon(ico_path('pdf_summary_app.ico')))
     window = PDFSummaryApp()
     window.show()
     sys.exit(app.exec())
